@@ -3,14 +3,17 @@ import psycopg2
 import config as cfg
 from selenium import webdriver
 from selenium.webdriver.common.by import By
+from selenium.common.exceptions import NoSuchElementException
 
 def dbConnect():
+    # Establish a connection to database
     try:
         conn = psycopg2.connect(f'host=localhost dbname=sleepingongems user=postgres password={cfg.dbPassword}')
     except psycopg2.Error as e:
         print('ERROR: Connection to sleepingongems unsuccessful.')
         print(e)
 
+    # Initialize cursor to execute queries
     try:
         cur = conn.cursor()
     except psycopg2.Error as e:
@@ -18,6 +21,20 @@ def dbConnect():
         print(e)
 
     return conn, cur
+
+def createTable(cur):
+    # Create table to store collected data
+    SQL = 'CREATE TABLE IF NOT EXISTS posts (id SERIAL PRIMARY KEY, \
+                                             url VARCHAR(50) NOT NULL, \
+                                             date DATE, \
+                                             caption TEXT NOT NULL, \
+                                             likes INTEGER, \
+                                             CONSTRAINT link UNIQUE(url));'
+    try:
+        cur.execute(SQL)
+    except psycopg2.Error as e:
+        print('ERROR: Posts table creation unsuccessful.')
+        print(e)
 
 def login(driver):
     # Enter Username and Password –> Click 'Login'
@@ -57,39 +74,60 @@ def search(driver):
     driver.find_element(By.CSS_SELECTOR, 'a[href="/sleepingongems/"]').click()
     time.sleep(2)
 
-def collectHrefs(driver, cur):
-    # Get beginning scrollHeight
-    oldScrollHeight = driver.execute_script('return document.body.scrollHeight;')
-    while True:
-        print('Old: ' + str(oldScrollHeight))
-        # Scroll to load new posts & get posts
-        for _ in range(5):
-            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-        posts = driver.find_elements(By.CSS_SELECTOR, 'div[class="_aabd _aa8k  _al3l"]')
-
-        time.sleep(2)
-        # Obtain href attribute from each post
-        for post in posts:
-            try:
-                href = post.find_element(By.XPATH, './/a').get_attribute('href')
-                cur.execute(f"INSERT INTO hrefs (href) VALUES ('{href}') \
-                                ON CONFLICT DO NOTHING")
-            except psycopg2.Error as e:
-                print('ERROR: Record insertion unsuccessful.')
-                print(e)
-                pass
+def balance(caption):
+    if "'" in caption or "’" in caption:
+        caption = caption.replace("'", "''")
+        caption = caption.replace("’", "''")
         
+    return caption
+
+def collect(driver, cur):
+    # Click initial post
+    time.sleep(2)
+    driver.find_element(By.CSS_SELECTOR, 'div[class="_aabd _aa8k  _al3l"]').click()
+
+    # Create SQL query
+    SQL = "INSERT INTO posts (url, date, caption, likes) VALUES ('{}', '{}', '{}', '{}');"
+    while True:
         time.sleep(2)
-        newScrollHeight = driver.execute_script('return document.body.scrollHeight;')
-        print('New: ' + str(newScrollHeight))
-        if newScrollHeight == oldScrollHeight:
+        # Collect data
+        div = driver.find_element(By.CSS_SELECTOR, 'div[class="x1cy8zhl x9f619 x78zum5 xl56j7k x2lwn1j xeuugli x47corl"]')
+        url = driver.current_url.rsplit('/', 1)[:-1][0] +'/'
+        try:
+            caption = balance(div.find_element(By.XPATH, './/h1').text)
+        except NoSuchElementException:
+            caption = 'Caption does not exist.'
+            pass
+        date = div.find_element(By.CSS_SELECTOR, 'time[class="_aaqe"]').get_attribute('datetime').split('T')[0]
+        section = div.find_element(By.CSS_SELECTOR, 'section[class="_ae5m _ae5n _ae5o"]')
+        likes = int(section.find_element(By.CSS_SELECTOR, '.html-span').text.replace(',',""))
+        print('URL: ' + str(url) +
+              '\nCaption: ' + caption +
+              '\nDate: ' + date +
+              '\nLikes: ' + str(likes))
+        
+        # Insert data record into database
+        try:
+            cur.execute(SQL.format(url, date, caption, likes))
+            print('^ SUCCESS: Inserted ^')
+        except psycopg2.Error as e:
+            print('^ ERROR: Record insertion unsuccessful. ^')
+            print(e)
+            pass
+
+        # Click Next arrow, if element does not exist break out of loop (last post reached)
+        try:
+            driver.find_element(By.CSS_SELECTOR, 'svg[aria-label="Next"]').click()
+        except NoSuchElementException:
+            print("Reached last post.")
             break
-        time.sleep(2)
-        oldScrollHeight = newScrollHeight
 
 # Connect to SleepingOnGems database & Initialize cursor
 conn, cur = dbConnect()
 conn.set_session(autocommit=True)
+
+# Create table in database
+createTable(cur)
 
 # Initialize Chrome webdriver and go to Instagram
 driver = webdriver.Chrome()
@@ -101,5 +139,10 @@ login(driver)
 # Search SleepingOnGems profile
 search(driver)
 
-# Collect Hrefs
-collectHrefs(driver, cur)
+# Begin Scraping
+collect(driver, cur)
+
+# Close driver, cursor, and connection
+driver.quit()
+cur.close()
+conn.close()
