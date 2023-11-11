@@ -67,6 +67,13 @@ def getAccessToken():
 
     return token
 
+def search(captions, token):
+    url = 'https://api.spotify.com/v1/search'
+    headers = {
+        'Authorization' : 'Bearer ' + token
+    }
+
+
 start = time.time()
 conn, cur = connectDB()
 
