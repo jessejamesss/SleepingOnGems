@@ -1,5 +1,8 @@
 import re
 import time
+import json
+import base64
+import requests
 import psycopg2
 import itertools
 import config as cfg
@@ -34,26 +37,44 @@ def getCaptions(cur):
     return captions
 
 def transform(captions):
-    hasSymbol = []
+    cleaned = []
     for caption in captions:
         if '🎶' in caption:
-            hasSymbol.append(caption)
+            pattern = re.compile(r'\b(.+)\s-\s(.+)\b')
+            match = pattern.finditer(caption)
 
-    return hasSymbol
+            for m in match:
+                s = re.sub(r'\(.*?\)|\(.*?\w*|\[.*?\]+/g',"",str(m.group(0)))
+                cleaned.append(s)
 
-if __name__ == '__main__':
-    start = time.time()
-    conn, cur = connectDB()
-    captions = getCaptions(cur)
+    return cleaned
+            
+def getAccessToken():
+    authString = cfg.SPOTIFY_CLIENT_ID + ':' + cfg.SPOTIFY_CLIENT_SECRET
+    authBytes = authString.encode('utf-8')
+    authBase64 = str(base64.b64encode(authBytes), 'utf-8')
 
-    withMusic = transform(captions)
-    for caption in withMusic:
-        pattern = re.compile(r'\b(.+)\s-\s(.+)\b')
-        match = pattern.finditer(caption)
+    url = 'https://accounts.spotify.com/api/token'
+    headers = {
+        'Authorization' : 'Basic ' + authBase64,
+        'Content-Type' : 'application/x-www-form-urlencoded'
+    }
+    data = {'grant_type' : 'client_credentials'}
+    result = requests.post(url, headers=headers, data=data)
+    jsonResult = json.loads(result.content)
+    print(jsonResult)
+    token = jsonResult['access_token']
 
-        for m in match:
-            s = re.sub(r'\(.*?\)|\(.*?\w*|\[.*?\]+|@\w+/g',"",str(m.group(0)))
-            print(s)
+    return token
 
+start = time.time()
+conn, cur = connectDB()
 
-    print(time.time() - start)
+captions = getCaptions(cur)
+captionsCleaned = transform(captions)
+
+accessToken = getAccessToken()
+
+print(captionsCleaned)
+print(accessToken)
+print(time.time() - start)
