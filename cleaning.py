@@ -6,6 +6,7 @@ import requests
 import psycopg2
 import itertools
 import config as cfg
+from urllib.parse import urlencode
 
 def connectDB():
     try:
@@ -23,8 +24,20 @@ def connectDB():
     print('CONNECTED TO DATABASE.')
     return conn, cur
 
+def createTable(cur):
+    SQL = 'CREATE TABLE IF NOT EXISTS cleaned_captions (id SERIAL PRIMARY KEY, \
+                                                        url VARCHAR(50), \
+                                                        clean_caption TEXT, \
+                                                        post_id INTEGER REFERENCES posts(id));'
+    try:
+        cur.execute(SQL)
+        print('SUCCESS: Cleaned_Captions table created.')
+    except psycopg2.Error as e:
+        print('ERROR: Cleaned_Captions table creation unsuccessful.')
+        print(e)
+
 def getCaptions(cur):
-    SQL = f'SELECT caption FROM posts WHERE caption <> \'Caption does not exist.\''
+    SQL = 'SELECT id, url, caption FROM posts WHERE caption <> \'Caption does not exist.\''
     try:
         cur.execute(SQL)
     except psycopg2.Error as e:
@@ -32,56 +45,44 @@ def getCaptions(cur):
         print(e)
 
     captions = cur.fetchall()
-    captions = list(itertools.chain(*captions))
-    
+    captions = [list(record) for record in captions]
     return captions
 
-def transform(captions):
-    cleaned = []
+def balance(caption):
+    if "'" in caption or "’" in caption:
+        caption = caption.replace("'", "''")
+        caption = caption.replace("’", "''")
+    return caption
+
+def transformAndLoad(captions, cur):
+    SQL = "INSERT INTO cleaned_captions (url, clean_caption, post_id) VALUES ('{}', '{}', '{}');"
     for caption in captions:
-        if '🎶' in caption:
+        # Check if caption contains a song (Majority of posts will contain a song if '🎶' exists in the caption)
+        if '🎶' in caption[2]:
+            postID = caption[0]
+            url = caption[1]
             pattern = re.compile(r'\b(.+)\s-\s(.+)\b')
-            match = pattern.finditer(caption)
+            match = pattern.finditer(caption[2])
 
+            # Find matches of text following the format 'artist/song name - artist/song name'
             for m in match:
-                s = re.sub(r'\(.*?\)|\(.*?\w*|\[.*?\]+/g',"",str(m.group(0)))
-                cleaned.append(s)
+                cleanCaption = balance(re.sub(r'\(.*?\)|\(.*?\w*|\[.*?\]+/g',"",str(m.group(0))))
+                print('URL: ' + str(url) +
+                    '\nCaption: ' + str(cleanCaption) +
+                    '\nPost ID: ' + str(postID))
 
-    return cleaned
-            
-def getAccessToken():
-    authString = cfg.SPOTIFY_CLIENT_ID + ':' + cfg.SPOTIFY_CLIENT_SECRET
-    authBytes = authString.encode('utf-8')
-    authBase64 = str(base64.b64encode(authBytes), 'utf-8')
-
-    url = 'https://accounts.spotify.com/api/token'
-    headers = {
-        'Authorization' : 'Basic ' + authBase64,
-        'Content-Type' : 'application/x-www-form-urlencoded'
-    }
-    data = {'grant_type' : 'client_credentials'}
-    result = requests.post(url, headers=headers, data=data)
-    jsonResult = json.loads(result.content)
-    print(jsonResult)
-    token = jsonResult['access_token']
-
-    return token
-
-def search(captions, token):
-    url = 'https://api.spotify.com/v1/search'
-    headers = {
-        'Authorization' : 'Bearer ' + token
-    }
+                try:
+                    cur.execute(SQL.format(url, cleanCaption, postID))
+                    print('^ SUCCESS: Record Inserted. ^')
+                except psycopg2.Error as e:
+                    print('^ ERROR: Record insertion unssuccessful. ^')
+                    print(e)
 
 
 start = time.time()
 conn, cur = connectDB()
-
+conn.set_session(autocommit=True)
+createTable(cur)
 captions = getCaptions(cur)
-captionsCleaned = transform(captions)
-
-accessToken = getAccessToken()
-
-print(captionsCleaned)
-print(accessToken)
+transformAndLoad(captions, cur)
 print(time.time() - start)
