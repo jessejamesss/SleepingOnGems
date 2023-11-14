@@ -1,12 +1,7 @@
 import re
 import time
-import json
-import base64
-import requests
 import psycopg2
-import itertools
 import config as cfg
-from urllib.parse import urlencode
 
 def connectDB():
     try:
