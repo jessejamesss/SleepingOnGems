@@ -106,6 +106,13 @@ def collect(driver, cur):
               '\nDate: ' + date +
               '\nLikes: ' + str(likes))
         
+        # Check if record exists in database
+        try:
+            print('CHECK GOES HERE')
+            # break
+        except psycopg2.Error as e:
+            print(e)
+
         # Insert data record into database
         try:
             cur.execute(SQL.format(url, date, caption, likes))
@@ -116,6 +123,7 @@ def collect(driver, cur):
             pass
 
         # Click Next arrow, if element does not exist break out of loop (last post reached)
+        # Exception should only be reached on first scrape collection
         try:
             driver.find_element(By.CSS_SELECTOR, 'svg[aria-label="Next"]').click()
         except NoSuchElementException:
