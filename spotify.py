@@ -7,11 +7,33 @@ from urllib.parse import urlencode
 from flask import Flask, request, jsonify, session, redirect
 
 app = Flask(__name__)
+
 app.secret_key = cfg.SECRET_KEY
 CLIENT_ID = cfg.SPOTIFY_CLIENT_ID
 CLIENT_SECRET = cfg.SPOTIFY_CLIENT_SECRET
 AUTH_URL = 'https://accounts.spotify.com/authorize?'
 TOKEN_URL = 'https://accounts.spotify.com/api/token'
+
+def getURIS(songs):
+    uris = []
+    endpoint = f'https://api.spotify.com/v1/search?'
+    reqHeaders = {
+        'Authorization' : 'Bearer ' + session['access_token']
+    }
+
+    for song in songs:
+        url = endpoint + f'q={song}&type=track&limit=1'
+
+        res = requests.get(url, headers=reqHeaders)
+        data = res.json()
+        try:
+            uris.append(data['tracks']['items'][0]['uri'])
+        except:
+            print(f'Unable to add {song}.')
+            continue
+
+    print(uris)
+    return uris
 
 @app.route('/')
 def login():
@@ -79,11 +101,21 @@ def addSongs():
     songsToAdd = cur.fetchall()
     songsToAdd = list(chain.from_iterable(songsToAdd))
     print(songsToAdd)
-    # for i, song in enumerate(songsToAdd):
-    reqBody = {
-        'uris': ['spotify:track:4iV5W9uYEdYUVa79Axb7Rh', 'spotify:track:1i1fxkWeaMmKEB4T7zqbzK']
-    }
-    res = requests.post(endpoint, headers=reqHeaders, json=reqBody)
+    while True:
+        if not songsToAdd:
+            break
+        
+        add = songsToAdd[:100]
+        uris = getURIS(add)
+
+        reqBody = {
+            'uris': uris
+        }
+        res = requests.post(endpoint, headers=reqHeaders, json=reqBody)
+
+
+        songsToAdd = songsToAdd[100:]
+
     return jsonify(res.json())
 
 
