@@ -3,9 +3,9 @@ import config as cfg
 
 class Database:
     def __init__(self):
-        self.conn = psycopg2.connect(f'host=localhost 
-                                       dbname=sleepingongems 
-                                       user=postgres 
+        self.conn = psycopg2.connect(f'host=localhost \
+                                       dbname=sleepingongems \
+                                       user=postgres \
                                        password={cfg.dbPassword}')
         self.cur = self.conn.cursor()
 
@@ -27,8 +27,17 @@ class Database:
         self.cur.close()
         self.conn.close()
 
-    def autoCommit(self, commit=True):
-        self.conn.set_session(commit)
+    def set_session(self, commit=False):
+        self.conn.set_session(autocommit=commit)
+
+    def execute(self, sql):
+        self.cur.execute(sql)
+    
+    def fetchall(self):
+        return self.cur.fetchall()
+    
+    def fetchone(self):
+        return self.cur.fetchone()
 
     
 
