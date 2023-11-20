@@ -1,46 +1,28 @@
 import re
-import time
 import psycopg2
-import config as cfg
+from db import Database
 
-def connectDB():
-    try:
-        conn = psycopg2.connect(f'host=localhost dbname=sleepingongems user=postgres password={cfg.dbPassword}')
-    except psycopg2.Error as e:
-        print('ERROR: Connection to sleepingongems database unsuccessful.')
-        print(e)
+def getCaptions():
+    captions = []
+
+    # SQL query to get newly added captions
+    SQL = "SELECT id, url, caption \
+           FROM posts \
+           WHERE caption <> 'Caption does not exist.' \
+           AND NOT EXISTS (SELECT post_id \
+                           FROM cleaned_captions \
+                           WHERE posts.id = cleaned_captions.post_id);"
     
-    try:
-        cur = conn.cursor()
-    except psycopg2.Error as e:
-        print('ERROR: Cursor initialization unsuccessful.')
-        print(e)
+    with Database() as db:
+        db.set_session(commit=True)
+        try:
+            db.execute(SQL)
+        except psycopg2.Error as e:
+            print('ERROR: getCaptions query unsuccessful.')
+            print(e)
 
-    print('CONNECTED TO DATABASE.')
-    return conn, cur
-
-def createTable(cur):
-    SQL = 'CREATE TABLE IF NOT EXISTS cleaned_captions (id SERIAL PRIMARY KEY, \
-                                                        url VARCHAR(50), \
-                                                        clean_caption TEXT, \
-                                                        post_id INTEGER REFERENCES posts(id));'
-    try:
-        cur.execute(SQL)
-        print('SUCCESS: Cleaned_Captions table created.')
-    except psycopg2.Error as e:
-        print('ERROR: Cleaned_Captions table creation unsuccessful.')
-        print(e)
-
-def getCaptions(cur):
-    SQL = 'SELECT id, url, caption FROM posts WHERE caption <> \'Caption does not exist.\''
-    try:
-        cur.execute(SQL)
-    except psycopg2.Error as e:
-        print('ERROR: getCaptions query unsuccessful.')
-        print(e)
-
-    captions = cur.fetchall()
-    captions = [list(record) for record in captions]
+        captions = db.fetchall()
+        captions = [list(record) for record in captions]
     return captions
 
 def balance(caption):
@@ -49,7 +31,7 @@ def balance(caption):
         caption = caption.replace("’", "''")
     return caption
 
-def transformAndLoad(captions, cur):
+def transformAndLoad(captions):
     SQL = "INSERT INTO cleaned_captions (url, clean_caption, post_id) VALUES ('{}', '{}', '{}');"
     for caption in captions:
         # Check if caption contains a song (Majority of posts will contain a song if '🎶' exists in the caption)
@@ -66,18 +48,17 @@ def transformAndLoad(captions, cur):
                     '\nCaption: ' + str(cleanCaption) +
                     '\nPost ID: ' + str(postID))
 
-                try:
-                    cur.execute(SQL.format(url, cleanCaption, postID))
-                    print('^ SUCCESS: Record Inserted. ^')
-                except psycopg2.Error as e:
-                    print('^ ERROR: Record insertion unssuccessful. ^')
-                    print(e)
+                with Database() as db:
+                    db.set_session(commit=True)
+                    try:
+                        db.execute(SQL.format(url, cleanCaption, postID))
+                        print('^ SUCCESS: Record Inserted. ^')
+                    except psycopg2.Error as e:
+                        print('^ ERROR: Record insertion unssuccessful. ^')
+                        print(e)
 
 
-start = time.time()
-conn, cur = connectDB()
-conn.set_session(autocommit=True)
-createTable(cur)
-captions = getCaptions(cur)
-transformAndLoad(captions, cur)
-print(time.time() - start)
+if __name__ == '__main__':
+    captions = getCaptions()
+    transformAndLoad(captions)
+
