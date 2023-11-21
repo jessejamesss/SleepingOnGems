@@ -2,9 +2,10 @@ import base64
 import psycopg2
 import requests
 import config as cfg
-from itertools import chain
+from db import Database
+from datetime import date
 from urllib.parse import urlencode
-from flask import Flask, request, jsonify, session, redirect
+from flask import Flask, request, session, redirect
 
 app = Flask(__name__)
 
@@ -13,27 +14,6 @@ CLIENT_ID = cfg.SPOTIFY_CLIENT_ID
 CLIENT_SECRET = cfg.SPOTIFY_CLIENT_SECRET
 AUTH_URL = 'https://accounts.spotify.com/authorize?'
 TOKEN_URL = 'https://accounts.spotify.com/api/token'
-
-def getURIS(songs):
-    uris = []
-    endpoint = f'https://api.spotify.com/v1/search?'
-    reqHeaders = {
-        'Authorization' : 'Bearer ' + session['access_token']
-    }
-
-    for song in songs:
-        url = endpoint + f'q={song}&type=track&limit=1'
-
-        res = requests.get(url, headers=reqHeaders)
-        data = res.json()
-        try:
-            uris.append(data['tracks']['items'][0]['uri'])
-        except:
-            print(f'Unable to add {song}.')
-            continue
-
-    print(uris)
-    return uris
 
 @app.route('/')
 def login():
@@ -67,56 +47,96 @@ def callback():
 
     session['access_token'] = token_info['access_token']
     session['refresh_token'] = token_info['refresh_token']
-    # session['expires_at'] = datetime.now().timestamp() + token_info['expires_in']
+    
     return redirect('/sleepingongems')
 
 
 @app.route('/sleepingongems')
 def addSongs():
-    SQL = 'SELECT clean_caption FROM cleaned_captions;'
+    # Get the songs that need to be added from the Cleaned_Captions table
+    with Database() as db:
+        db.set_session(commit=True)
+        SQL = "SELECT id, clean_caption \
+               FROM cleaned_captions \
+               WHERE NOT EXISTS(SELECT cc_id \
+                                FROM playlist \
+                                WHERE cleaned_captions.id = playlist.cc_id);"
+        
+        try:
+            db.execute(SQL)
+        except psycopg2.Error as e:
+            print('ERROR: SQL query execution falied.')
+            print(e)
+
+        songsToAdd = db.fetchall()
+        songsToAdd = [list(record) for record in songsToAdd]
+    print(songsToAdd)  
+    
+    # Create endpoint and headers to search and add songs to playlist
     endpoint = f'https://api.spotify.com/v1/playlists/{cfg.playlistID}/tracks'
     reqHeaders = {
         'Authorization' : 'Bearer ' + session['access_token'],
         'Content-Type' : 'application/json'
     }
+    
+    searchHeaders = {
+        'Authorization' : 'Bearer ' + session['access_token']
+    }
 
-    try:
-        conn = psycopg2.connect(f'host=localhost dbname=sleepingongems user=postgres password={cfg.dbPassword}')
-    except psycopg2.Error as e:
-        print('ERROR: Connection to sleepingongems unsuccessful.')
-        print(e)
-
-    try:
-        cur = conn.cursor()
-    except psycopg2.Error as e:
-        print('ERROR: Cursor initialization unsuccessful.')
-        print(e)
-
-    try:
-        cur.execute(SQL)
-    except psycopg2.Error as e:
-        print('ERROR: SQL query execution falied.')
-        print(e)
-
-    songsToAdd = cur.fetchall()
-    songsToAdd = list(chain.from_iterable(songsToAdd))
-    print(songsToAdd)
-    while True:
-        if not songsToAdd:
-            break
+    # Beginning of playlist logic
+    while songsToAdd:
+        # Get the URIs of the first 100 songs 
+        uris = []
+        addToPlaylist = songsToAdd[:100]
         
-        add = songsToAdd[:100]
-        uris = getURIS(add)
+        # Iterate through first 100 songs and obtain track info through the search endpoint
+        for song in addToPlaylist:
+            # Search for current song using search endpoint
+            searchEndpoint = 'https://api.spotify.com/v1/search?' + f'q={song[1]}&type=track&limit=1'
 
+            res = requests.get(searchEndpoint, headers=searchHeaders)
+            res = res.json()
+
+            # Collect information needed, if no information can be collected continue 
+            try:
+                songID = res['tracks']['items'][0]['id']
+                songURI = res['tracks']['items'][0]['uri']
+                songName = res['tracks']['items'][0]['name']
+                songArtists = []
+                for artist in res['tracks']['items'][0]['artists']:
+                    songArtists.append(artist['name'])
+                addedAt = date.today()
+                ccID = song[0]
+            except:
+                print(f'WARNING: Unable to search {song[1]}.')
+                continue
+            
+            # Insert song into 'playlist' table in database
+            with Database() as db:
+                db.set_session(commit=True)
+
+                SQL = "INSERT INTO playlist VALUES(%s, %s, %s, %s, %s, %s)"
+                try:
+                    db.execute(SQL, [songID, songURI, songName, songArtists, addedAt, ccID])
+                    print(f'SUCCESS: {songName} added to playlist.')
+                except psycopg2.Error as e:
+                    print(f'ERROR: Record insertion for {songName} failed.')
+                    print(e)
+                    continue
+            
+            # Add URI to list– will be added if information is collected and does not exist in table
+            uris.append(songURI)
+    
+        # Send post request with the URIs to add songs to playlist
         reqBody = {
-            'uris': uris
+            'uris' : uris
         }
         res = requests.post(endpoint, headers=reqHeaders, json=reqBody)
 
-
+        # Delete the first 100 items
         songsToAdd = songsToAdd[100:]
 
-    return jsonify(res.json())
+    return 'Success'
 
-
-app.run(port=3000, debug=True)
+if __name__ == '__main__':
+    app.run(port=3000, debug=True)

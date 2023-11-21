@@ -30,8 +30,8 @@ class Database:
     def set_session(self, commit=False):
         self.conn.set_session(autocommit=commit)
 
-    def execute(self, sql):
-        self.cur.execute(sql)
+    def execute(self, sql, args=None):
+        self.cur.execute(sql, args)
     
     def fetchall(self):
         return self.cur.fetchall()
